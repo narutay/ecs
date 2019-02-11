@@ -1,0 +1,117 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: AWS CloudFormation template to create resources required to run tasks
+  on an ECS cluster for Regions with 2 AZ.
+
+Outputs:
+  ECSCluster:
+    Value: !Ref EcsCluster
+
+Parameters:
+  EcsClusterName:
+    Default: ecs-cluster-1
+    Description: ECS Cluster Name
+    Type: String
+
+Resources:
+  CWLogGroup:
+    Type: "AWS::Logs::LogGroup"
+    Properties:
+      LogGroupName: !Sub ${EcsClusterName}
+      RetentionInDays: 7 # [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1827, 3653]
+  EcsCluster:
+    Properties:
+      ClusterName:
+        Ref: EcsClusterName
+    Type: AWS::ECS::Cluster
+  EcsInstanceAsg:
+    Properties:
+      DesiredCapacity: '1'
+      LaunchConfigurationName:
+        Ref: EcsInstanceLc
+      MaxSize: '1'
+      MinSize: '1'
+      Tags:
+      - Key: Name
+        PropagateAtLaunch: 'true'
+        Value:
+          Fn::Join:
+          - ''
+          - - 'ECS Instance - '
+            - Ref: AWS::StackName
+      VPCZoneIdentifier:
+        - Fn::ImportValue: PublicSubnetAz1
+        - Fn::ImportValue: PublicSubnetAz2
+    Type: AWS::AutoScaling::AutoScalingGroup
+  EcsInstanceLc:
+    Properties:
+      AssociatePublicIpAddress: true
+      IamInstanceProfile:
+        Ref: EcsInstanceProfile
+      ImageId: ami-0b8933b7fd93e97e9
+      InstanceType: t2.micro
+      KeyName: windkey
+      SecurityGroups:
+        - Ref: EcsSecurityGroup
+      UserData:
+        Fn::Base64:
+          Fn::Join:
+          - ''
+          - - '#!/bin/bash
+
+              '
+            - echo ECS_CLUSTER=
+            - Ref: EcsClusterName
+            - ' >> /etc/ecs/ecs.config
+
+              '
+            - 'sudo yum update -y ecs-init
+
+              '
+    Type: AWS::AutoScaling::LaunchConfiguration
+  EcsInstancePolicy:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+      Path: /
+    Type: AWS::IAM::Role
+  EcsInstanceProfile:
+    Properties:
+      Path: /
+      Roles:
+      - Ref: EcsInstancePolicy
+    Type: AWS::IAM::InstanceProfile
+  EcsSecurityGroup:
+    Properties:
+      GroupDescription: ECS Security Group
+      VpcId:
+        Fn::ImportValue: VpcId
+    Type: AWS::EC2::SecurityGroup
+  EcsSecurityGroupECSports:
+    Properties:
+      FromPort: '31000'
+      GroupId:
+        Ref: EcsSecurityGroup
+      IpProtocol: tcp
+      SourceSecurityGroupId:
+        Ref: EcsSecurityGroup
+      ToPort: '61000'
+    Type: AWS::EC2::SecurityGroupIngress
+  EcsSecurityGroupSSHinbound:
+    Properties:
+      CidrIp: 0.0.0.0/0
+      FromPort: '22'
+      GroupId:
+        Ref: EcsSecurityGroup
+      IpProtocol: tcp
+      ToPort: '22'
+    Type: AWS::EC2::SecurityGroupIngress
